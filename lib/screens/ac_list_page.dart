@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:universal_ac_remote/model/ac_unit_model.dart';
 import 'package:universal_ac_remote/model/discover_ac_model.dart';
 import 'package:universal_ac_remote/screens/ac_remote_page_screen.dart';
-
 import 'discover_ac_page_screen.dart';
 
 class AcListPage extends StatefulWidget {
@@ -15,12 +14,12 @@ class AcListPage extends StatefulWidget {
 class _AcListPageState extends State<AcListPage> {
 
   final List<ACUnit> acUnits = [
-    ACUnit(name: 'Living Room AC', brand: 'Samsung', room: 'Living Room', id: 'ac_001'),
+    ACUnit(id: 'office_ac_001', name: 'Office AC', brand: 'Mitsubishi Heavy Industries', room: 'Office'),
     ACUnit(name: 'Bedroom AC', brand: 'LG', room: 'Bedroom', id: 'ac_002'),
   ];
 
   void openRemote(ACUnit ac) {
-    Navigator.push(context, MaterialPageRoute(builder: (context) => ACRemotePage(ac: ac)));
+    Navigator.push(context, MaterialPageRoute(builder: (context) => ACRemotePage( acName: ac.name, brand: ac.brand,)));
   }
 
   Future<void> openDiscovery() async {
@@ -50,10 +49,6 @@ class _AcListPageState extends State<AcListPage> {
       SnackBar(content: Text('${discoveredAC.deviceName} added successfully!')),
     );
   }
-
-
-
-
 
   @override
   Widget build(BuildContext context) {

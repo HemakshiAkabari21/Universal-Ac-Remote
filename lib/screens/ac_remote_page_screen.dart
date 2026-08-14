@@ -1,118 +1,394 @@
 import 'package:flutter/material.dart';
-import 'package:universal_ac_remote/model/ac_unit_model.dart';
+import 'package:universal_ac_remote/model/ac_state.dart';
+import 'package:universal_ac_remote/protocols/mhi_encoder.dart';
 import 'package:universal_ac_remote/services/ir_service.dart';
 
 class ACRemotePage extends StatefulWidget {
-  final ACUnit ac;
+  final String acName;
+  final String brand;
 
-  const ACRemotePage({super.key, required this.ac});
+  const ACRemotePage({super.key, required this.acName, required this.brand});
 
   @override
   State<ACRemotePage> createState() => _ACRemotePageState();
 }
 
 class _ACRemotePageState extends State<ACRemotePage> {
+  ACState ac = const ACState();
+  bool sending = false;
 
-  int temperature = 24;
-  bool isOn = true;
-  String mode = 'Cool';
-  String fanSpeed = 'Auto';
-  bool swing = false;
+  @override
+  void initState() {
+    // TODO: implement initState
+    checkIR();
+    super.initState();
+  }
 
-  void increaseTemperature() {
-    if (temperature < 30) {
-      setState(() {temperature++;});
+
+  // POWER
+
+  Future<void> togglePower() async {
+    setState(() {
+      ac = ac.copyWith(
+        power: !ac.power,
+      );
+    });
+
+    await sendCurrentState();
+  }
+
+  // TEMPERATURE
+
+  Future<void> increaseTemperature() async {
+    if (ac.temperature >= 30) {
+      debugPrint('[AC] Temperature already at maximum: ''${ac.temperature}°C');
+      return;
+    }
+    final oldTemperature = ac.temperature;
+    final newTemperature = oldTemperature + 1;
+    debugPrint('[AC] Temperature increase requested: ''$oldTemperature°C → $newTemperature°C');
+    setState(() {
+      ac = ac.copyWith(temperature: newTemperature);
+    });
+
+    await sendTemperatureCommand(newTemperature);
+  }
+
+  Future<void> decreaseTemperature() async {
+    if (ac.temperature <= 16) {
+      debugPrint('[AC] Temperature already at minimum: ''${ac.temperature}°C');
+      return;
+    }
+    final oldTemperature = ac.temperature;
+    final newTemperature = oldTemperature - 1;
+    debugPrint('[AC] Temperature decrease requested: ''$oldTemperature°C → $newTemperature°C');
+    setState(() {
+      ac = ac.copyWith(temperature: newTemperature);
+    });
+    await sendTemperatureCommand(newTemperature);
+  }
+
+  Future<void> checkIR() async {
+    debugPrint('[IR] Checking Redmi IR emitter...');
+    final available = await IRService.hasIrEmitter();
+    if (!available) {
+      debugPrint('[IR] Redmi IR emitter: NOT AVAILABLE');
+      debugPrint('[AC] Controller status: NOT READY');
+      return;
+    }
+    debugPrint('[IR] Redmi IR emitter: AVAILABLE');
+    try {
+      final ranges = await IRService.getCarrierFrequencies();
+      if (ranges.isEmpty) {
+        debugPrint('[IR] No carrier frequency information returned');
+      } else {
+        for (final range in ranges) {
+          debugPrint('[IR] Carrier: ''${range['min']} Hz - ''${range['max']} Hz');
+        }
+      }
+      debugPrint('[AC] Controller status: READY');
+    } catch (e) {
+      debugPrint('[IR] Carrier frequency check FAILED: $e');
+      debugPrint('[AC] Controller status: NOT READY');
     }
   }
 
-  void decreaseTemperature(){
-    if (temperature > 16) {setState(() {temperature--;});}
+  Future<void> sendTemperatureCommand(int temperature) async {
+    debugPrint('========================================');
+
+    debugPrint('[AC] Office AC command');
+    debugPrint('[AC] Brand: ${widget.brand}');
+    debugPrint('[AC] Remote: RKX502A009');
+    debugPrint('[AC] Target temperature: $temperature°C');
+
+    // This will become the real verified encoder.
+    final command = MHIEncoder152.encode(temperature: temperature, mode: ac.mode ?? ACMode.cool, fan: ac.fanSpeed ?? ACFanSpeed.auto);
+
+    debugPrint('[IR] Carrier: ${command.frequency} Hz',);
+
+    debugPrint('[IR] Pattern length: ${command.pattern.length}',);
+
+    debugPrint('[IR] Transmitting...');
+
+    final success = await IRService.transmit(pattern: command.pattern, frequency: command.frequency);
+
+    if (success) {
+      debugPrint('[IR] Transmission completed');
+      debugPrint('[AC] Command status: SENT',);
+      debugPrint('[AC] AC acknowledgement: NOT AVAILABLE');
+    } else {
+      debugPrint('[IR] Transmission FAILED');
+    }
+
+    debugPrint('========================================');
   }
 
-  void togglePower() {setState(() {isOn = !isOn;});}
 
-  Future<void> testIR() async {
-    final hasIR = await IRService.hasIrEmitter();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(hasIR ? 'IR blaster detected!' : 'No IR blaster detected.')));
+  // MODE
+
+  Future<void> changeMode(ACMode mode) async {
+    setState(() {ac = ac.copyWith(mode: mode);});
+    await sendCurrentState();
+  }
+
+  // FAN
+
+  Future<void> changeFanSpeed(ACFanSpeed speed,) async {
+    setState(() {
+      ac = ac.copyWith(fanSpeed: speed);
+    });
+    await sendCurrentState();
+  }
+
+  // SWING
+
+  Future<void> toggleSwing() async {
+    setState(() {ac = ac.copyWith(swing: !ac.swing);});
+    await sendCurrentState();
+  }
+
+  // 3D AUTO
+
+  Future<void> toggle3DAuto() async {
+    setState(() {ac = ac.copyWith(threeDAuto: !ac.threeDAuto);});
+    await sendCurrentState();
+  }
+
+  // ECO
+
+  Future<void> toggleEco() async {
+    setState(() {ac = ac.copyWith(eco: !ac.eco);});
+    await sendCurrentState();
+  }
+
+  // HIGH POWER
+
+  Future<void> toggleHighPower() async {
+    setState(() {ac = ac.copyWith(highPower: !ac.highPower);});
+    await sendCurrentState();
+  }
+
+  // SEND CURRENT AC STATE
+
+  Future<void> sendCurrentState() async {
+    if (sending) {
+      return;
+    }
+
+    setState(() {sending = true;});
+
+    try {
+      /*
+       * IMPORTANT
+       *
+       * We are NOT transmitting the MHI waveform yet.
+       *
+       * We first built the complete AC state.
+       *
+       * Next we will convert:
+       *
+       * ACState
+       *    ↓
+       * MHI protocol encoder
+       *    ↓
+       * IR pulse pattern
+       *    ↓
+       * Redmi IR
+       */
+
+      debugPrint('AC STATE: ''power=${ac.power}, ''temperature=${ac.temperature}, ''mode=${ac.mode}, ''fan=${ac.fanSpeed}, ''swing=${ac.swing}, '
+          '3D=${ac.threeDAuto}, ''eco=${ac.eco}, ''highPower=${ac.highPower}');
+
+      await Future.delayed(const Duration(milliseconds: 150));
+    } finally {
+      if (mounted) {
+        setState(() {sending = false;});
+      }
+    }
+  }
+
+  // HELPERS
+
+  String modeName(ACMode mode) {
+    switch (mode) {
+      case ACMode.auto:
+        return 'AUTO';
+
+      case ACMode.cool:
+        return 'COOL';
+
+      case ACMode.dry:
+        return 'DRY';
+
+      case ACMode.fan:
+        return 'FAN';
+
+      case ACMode.heat:
+        return 'HEAT';
+    }
+  }
+
+  String fanName(ACFanSpeed speed) {
+    switch (speed) {
+      case ACFanSpeed.auto:
+        return 'AUTO';
+
+      case ACFanSpeed.low:
+        return 'LOW';
+
+      case ACFanSpeed.medium:
+        return 'MEDIUM';
+
+      case ACFanSpeed.high:
+        return 'HIGH';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.ac.name)),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            Text(widget.ac.brand, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 30),
-            const Icon(Icons.ac_unit, size: 70),
-            const SizedBox(height: 20),
-            Text('$temperature°C', style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton.filled(onPressed: decreaseTemperature, icon: const Icon(Icons.remove), iconSize: 30),
-                const SizedBox(width: 30),
-                IconButton.filled(onPressed: increaseTemperature, icon: const Icon(Icons.add), iconSize: 30),
-              ],
-            ),
-            const SizedBox(height: 30),
-            SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(onPressed: togglePower, icon: Icon(isOn ? Icons.power_settings_new : Icons.power_off),
-                    label: Text(isOn ? 'POWER ON' : 'POWER OFF'))),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Mode'),
-                DropdownButton<String>(
-                  value: mode,
-                  items: const [
-                    DropdownMenuItem(value: 'Cool', child: Text('Cool')),
-                    DropdownMenuItem(value: 'Heat', child: Text('Heat')),
-                    DropdownMenuItem(value: 'Dry', child: Text('Dry')),
-                    DropdownMenuItem(value: 'Fan', child: Text('Fan')),
-                    DropdownMenuItem(value: 'Auto', child: Text('Auto')),
+      appBar: AppBar(title: Text(widget.acName), centerTitle: true),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Text(widget.brand, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 20),
+
+              // POWER
+
+              Align(alignment: Alignment.centerRight, child: IconButton.filled(onPressed: togglePower,
+                  icon: Icon(Icons.power_settings_new), style: IconButton.styleFrom(minimumSize: const Size(56, 56)))),
+              const SizedBox(height: 10),
+
+              // TEMPERATURE
+
+              Text('${ac.temperature}°C', style: const TextStyle(fontSize: 64, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text(ac.power ? modeName(ac.mode) : 'OFF', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  roundButton(icon: Icons.remove, onPressed: ac.power ? decreaseTemperature : null),
+                  const SizedBox(width: 40),
+                  roundButton(icon: Icons.add, onPressed: ac.power ? increaseTemperature : null),
+                ],
+              ),
+              const SizedBox(height: 32),
+
+              // MODE
+
+              sectionTitle('MODE'),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  modeButton('AUTO', ACMode.auto),
+                  modeButton('COOL', ACMode.cool),
+                  modeButton('DRY', ACMode.dry),
+                  modeButton('FAN', ACMode.fan),
+                  modeButton('HEAT', ACMode.heat),
+                ],
+              ),
+              const SizedBox(height: 28),
+
+              // FAN
+
+              sectionTitle('FAN SPEED'),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                children: [
+                  fanButton('AUTO', ACFanSpeed.auto),
+                  fanButton('LOW', ACFanSpeed.low),
+                  fanButton('MED', ACFanSpeed.medium),
+                  fanButton('HIGH', ACFanSpeed.high),
+                ],
+              ),
+              const SizedBox(height: 28),
+
+              // OPTIONS
+
+              sectionTitle('OPTIONS'),
+              const SizedBox(height: 8),
+              Card(
+                child: Column(
+                  children: [
+                    SwitchListTile(secondary: const Icon(Icons.swap_vert), title: const Text('Air Swing'), value: ac.swing,
+                        onChanged: ac.power ? (_) => toggleSwing() : null),
+                    const Divider(height: 1),
+                    SwitchListTile(secondary: const Icon(Icons.air), title: const Text('3D AUTO'), value: ac.threeDAuto,
+                        onChanged: ac.power ? (_) => toggle3DAuto() : null),
+                    const Divider(height: 1),
+                    SwitchListTile(secondary: const Icon(Icons.eco), title: const Text('ECONO'),
+                        value: ac.eco, onChanged: ac.power ? (_) => toggleEco() : null),
+                    const Divider(height: 1),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.bolt),
+                      title: const Text('HI POWER'),
+                      value: ac.highPower,
+                      onChanged: ac.power ? (_) => toggleHighPower() : null,
+                    ),
                   ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {mode = value;});
-                  },
                 ),
-              ],
-            ),
+              ),
 
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Fan Speed'),
-                DropdownButton<String>(
-                  value: fanSpeed,
-                  items: const [
-                    DropdownMenuItem(value: 'Auto', child: Text('Auto')),
-                    DropdownMenuItem(value: 'Low', child: Text('Low')),
-                    DropdownMenuItem(value: 'Medium', child: Text('Medium')),
-                    DropdownMenuItem(value: 'High', child: Text('High')),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {fanSpeed = value;});
-                  },
+              const SizedBox(height: 24),
+
+              // CONNECTION STATUS
+
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Icon(Icons.settings_remote),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(sending ? 'Sending...' : 'IR remote ready')),
+                      if (sending)
+                        const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-
-            SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Swing'), value: swing, onChanged: (value) {setState(() {swing = value;});}),
-
-            FilledButton.icon(onPressed: testIR, icon: const Icon(Icons.settings_remote), label: const Text('Test IR'))
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  // WIDGET
+
+  Widget sectionTitle(String text) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+    );
+  }
+
+  Widget roundButton({required IconData icon, required VoidCallback? onPressed}) {
+    return SizedBox(width: 70, height: 70, child: IconButton.filled(onPressed: onPressed, icon: Icon(icon, size: 32)));
+  }
+
+  Widget modeButton(String text, ACMode mode) {
+    final selected = ac.mode == mode;
+
+    return FilledButton(
+      onPressed: ac.power ? () => changeMode(mode) : null,
+      style: FilledButton.styleFrom(
+        backgroundColor: selected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.surfaceContainerHighest,
+        foregroundColor: selected ? Theme.of(context).colorScheme.onPrimary : Theme.of(context).colorScheme.onSurface,
+      ),
+      child: Text(text),
+    );
+  }
+
+  Widget fanButton(String text, ACFanSpeed speed) {
+    final selected = ac.fanSpeed == speed;
+    return ChoiceChip(label: Text(text), selected: selected,onSelected: ac.power ? (_) => changeFanSpeed(speed) : null);
   }
 }

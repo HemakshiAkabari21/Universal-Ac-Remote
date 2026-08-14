@@ -28,21 +28,13 @@ public class MainActivity extends FlutterActivity {
                             break;
 
                         case "transmit":
-                            Integer frequency = call.argument("frequency");
-                            java.util.List<Integer> pattern = call.argument("pattern");
-
-                            if (frequency == null || pattern == null) {
-                                result.error("INVALID_ARGUMENT", "Missing IR data", null);
-                                return;
+                            int frequency = call.argument("frequency");
+                            java.util.List<Integer> list = call.argument("pattern");
+                            int[] pattern = new int[list.size()];
+                            for (int i = 0; i < list.size(); i++) {
+                                pattern[i] = list.get(i);
                             }
-
-                            int[] patternArray = new int[pattern.size()];
-
-                            for (int i = 0; i < pattern.size(); i++) {
-                                patternArray[i] = pattern.get(i);
-                            }
-
-                            boolean success = irService.transmit(frequency, patternArray);
+                            boolean success = irService.transmit(frequency, pattern);
                             result.success(success);
                             break;
 

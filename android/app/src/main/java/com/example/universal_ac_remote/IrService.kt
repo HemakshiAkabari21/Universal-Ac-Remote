@@ -11,6 +11,10 @@ class IrService(private val context: Context) {
         return irManager?.hasIrEmitter() == true
     }
 
+    fun getCarrierFrequencies(): Array<ConsumerIrManager.CarrierFrequencyRange> {
+        return irManager?.carrierFrequencies ?: emptyArray()
+    }
+
     fun transmit(frequency: Int, pattern: IntArray): Boolean {
 
         if (irManager == null) { return false }
