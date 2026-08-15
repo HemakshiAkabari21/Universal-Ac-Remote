@@ -41,20 +41,23 @@ class _ACRemotePageState extends State<ACRemotePage> {
 
   Future<void> increaseTemperature() async {
     if (ac.temperature >= 30) {
-      debugPrint('[AC] Temperature already at maximum: ''${ac.temperature}°C');
+      debugPrint('[AC] Temperature already at maximum: ${ac.temperature}°C');
       return;
     }
-    final oldTemperature = ac.temperature;
-    final newTemperature = oldTemperature + 1;
-    debugPrint('[AC] Temperature increase requested: ''$oldTemperature°C → $newTemperature°C');
-    setState(() {
-      ac = ac.copyWith(temperature: newTemperature);
-    });
-
-    await sendTemperatureCommand(newTemperature);
+    setState(() { ac = ac.copyWith(temperature: ac.temperature + 1); });
+    await sendCurrentState();
   }
 
   Future<void> decreaseTemperature() async {
+    if (ac.temperature <= 17) { // matches MHI's real hardware floor
+      debugPrint('[AC] Temperature already at minimum: ${ac.temperature}°C');
+      return;
+    }
+    setState(() { ac = ac.copyWith(temperature: ac.temperature - 1); });
+    await sendCurrentState();
+  }
+
+ /* Future<void> decreaseTemperature() async {
     if (ac.temperature <= 16) {
       debugPrint('[AC] Temperature already at minimum: ''${ac.temperature}°C');
       return;
@@ -66,7 +69,7 @@ class _ACRemotePageState extends State<ACRemotePage> {
       ac = ac.copyWith(temperature: newTemperature);
     });
     await sendTemperatureCommand(newTemperature);
-  }
+  }*/
 
   Future<void> checkIR() async {
     debugPrint('[IR] Checking Redmi IR emitter...');
@@ -102,7 +105,7 @@ class _ACRemotePageState extends State<ACRemotePage> {
     debugPrint('[AC] Target temperature: $temperature°C');
 
     // This will become the real verified encoder.
-    final command = MHIEncoder152.encode(temperature: temperature, mode: ac.mode ?? ACMode.cool, fan: ac.fanSpeed ?? ACFanSpeed.auto);
+    final command = MHIEncoder152.encode(temperature: temperature, mode: ac.mode ?? ACMode.cool, fan: ac.fanSpeed ?? ACFanSpeed.auto, state: ac);
 
     debugPrint('[IR] Carrier: ${command.frequency} Hz',);
 
@@ -171,39 +174,31 @@ class _ACRemotePageState extends State<ACRemotePage> {
   // SEND CURRENT AC STATE
 
   Future<void> sendCurrentState() async {
-    if (sending) {
-      return;
-    }
+    if (sending) return;
 
-    setState(() {sending = true;});
+    setState(() { sending = true; });
 
     try {
-      /*
-       * IMPORTANT
-       *
-       * We are NOT transmitting the MHI waveform yet.
-       *
-       * We first built the complete AC state.
-       *
-       * Next we will convert:
-       *
-       * ACState
-       *    ↓
-       * MHI protocol encoder
-       *    ↓
-       * IR pulse pattern
-       *    ↓
-       * Redmi IR
-       */
+      debugPrint('========================================');
+      debugPrint('AC STATE: power=${ac.power}, temperature=${ac.temperature}, mode=${ac.mode}, '
+          'fan=${ac.fanSpeed}, swing=${ac.swing}, 3D=${ac.threeDAuto}, eco=${ac.eco}, highPower=${ac.highPower}');
 
-      debugPrint('AC STATE: ''power=${ac.power}, ''temperature=${ac.temperature}, ''mode=${ac.mode}, ''fan=${ac.fanSpeed}, ''swing=${ac.swing}, '
-          '3D=${ac.threeDAuto}, ''eco=${ac.eco}, ''highPower=${ac.highPower}');
+      final command = MHIEncoder152.encode(
+        temperature: ac.temperature,
+        mode: ac.mode,
+        fan: ac.fanSpeed,
+        state: ac,
+      );
 
-      await Future.delayed(const Duration(milliseconds: 150));
+      debugPrint('[IR] Carrier: ${command.frequency} Hz, pattern length: ${command.pattern.length}');
+      debugPrint('[IR] Transmitting...');
+
+      final success = await IRService.transmit(pattern: command.pattern, frequency: command.frequency);
+
+      debugPrint(success ? '[IR] Transmission completed' : '[IR] Transmission FAILED');
+      debugPrint('========================================');
     } finally {
-      if (mounted) {
-        setState(() {sending = false;});
-      }
+      if (mounted) setState(() { sending = false; });
     }
   }
 

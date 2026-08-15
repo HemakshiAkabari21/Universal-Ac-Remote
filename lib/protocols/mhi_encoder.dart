@@ -17,7 +17,7 @@ class MHIEncoder152 {
 
   static const List<int> zmsSig = [0xAD, 0x51, 0x3C, 0xE5, 0x1A];
 
-  static const Map<ACMode, int> _modeMap = {
+  static const Map<ACMode, int> modeMap = {
     ACMode.auto: 0,
     ACMode.cool: 1,
     ACMode.dry: 2,
@@ -33,10 +33,67 @@ class MHIEncoder152 {
     ACFanSpeed.high: 0x3,
   };
 
-  static ({int frequency, List<int> pattern}) encode({required int temperature, required ACMode mode, required ACFanSpeed fan, ACState? state,
+
+  static ({int frequency, List<int> pattern}) encode({required int temperature, required ACMode mode, required ACFanSpeed fan, required ACState state}) {
+    final t = temperature.clamp(minTemp, maxTemp) - minTemp;
+    final modeVal = modeMap[mode] ?? 0;
+    final power = state.power;
+
+    // HI POWER / ECONO override the selected fan speed on real MHI hardware.
+    final int fanVal = state.highPower ? 0x8 // Turbo
+        : state.eco ? 0x6 // Econo
+        : (fanMap[fan] ?? 0);
+
+    final swingV = state.swing ? 0 : 6; // 0 = Auto (moving), 6 = Off
+    const swingH = 0;
+    final three = state.threeDAuto ? 1 : 0;
+    final d = state.threeDAuto ? 1 : 0;
+    const night = 0;
+    const silent = 0;
+    const clean = 0;
+    const filter = 0;
+
+    final bytes = List<int>.filled(19, 0)..setRange(0, 5, zmsSig);
+
+    bytes[5] = (modeVal & 0x7) | ((power ? 1 : 0) << 3) | ((clean & 1) << 5) | ((filter & 1) << 6);
+    bytes[6] = (~bytes[5]) & 0xFF;
+
+    bytes[7] = t & 0xF;
+    bytes[8] = (~bytes[7]) & 0xFF;
+
+    bytes[9] = fanVal & 0xF;
+    bytes[10] = (~bytes[9]) & 0xFF;
+
+    // Byte 11: b1 Three, b4 D, b5-7 SwingV
+    bytes[11] = ((three & 1) << 1) | ((d & 1) << 4) | ((swingV & 0x7) << 5);
+    bytes[12] = (~bytes[11]) & 0xFF;
+
+    bytes[13] = swingH & 0xF;
+    bytes[14] = (~bytes[13]) & 0xFF;
+
+    bytes[15] = ((night & 1) << 6) | ((silent & 1) << 7);
+    bytes[16] = (~bytes[15]) & 0xFF;
+
+    bytes[17] = 0x80;
+    bytes[18] = (~bytes[17]) & 0xFF;
+
+    final pattern = <int>[hdrMark, hdrSpace];
+    for (final byte in bytes) {
+      for (int i = 0; i < 8; i++) {
+        pattern.add(bitMark);
+        pattern.add(((byte >> i) & 1) == 1 ? oneSpace : zeroSpace);
+      }
+    }
+    pattern.add(bitMark);
+    pattern.add(messageGap);
+
+    return (frequency: carrierFrequency, pattern: pattern);
+  }
+
+/*  static ({int frequency, List<int> pattern}) encode({required int temperature, required ACMode mode, required ACFanSpeed fan, ACState? state,
   }) {
     final t = temperature.clamp(minTemp, maxTemp) - minTemp; // 4 bits
-    final modeVal = _modeMap[mode] ?? 0;
+    final modeVal = modeMap[mode] ?? 0;
     final fanVal = fanMap[fan] ?? 0;
     final power = state?.power ?? true;
     const swingV = 0; // 3-bit field, Off=6/Auto=0 per header — left at Auto
@@ -87,5 +144,5 @@ class MHIEncoder152 {
     pattern.add(messageGap);
 
     return (frequency: carrierFrequency, pattern: pattern);
-  }
+  }*/
 }

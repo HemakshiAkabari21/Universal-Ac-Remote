@@ -1,8 +1,14 @@
 package com.example.universal_ac_remote;
 
+import android.hardware.ConsumerIrManager;
 import android.os.Bundle;
 
 import androidx.annotation.NonNull;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import io.flutter.embedding.android.FlutterActivity;
 import io.flutter.embedding.engine.FlutterEngine;
@@ -25,6 +31,18 @@ public class MainActivity extends FlutterActivity {
                     switch (call.method) {
                         case "hasIrEmitter":
                             result.success(irService.hasIrEmitter());
+                            break;
+
+                        case "getCarrierFrequencies":
+                            ConsumerIrManager.CarrierFrequencyRange[] ranges = irService.getCarrierFrequencies();
+                            List<Map<String, Integer>> rangeList = new ArrayList<>();
+                            for (ConsumerIrManager.CarrierFrequencyRange range : ranges) {
+                                Map<String, Integer> map = new HashMap<>();
+                                map.put("min", range.getMinFrequency());
+                                map.put("max", range.getMaxFrequency());
+                                rangeList.add(map);
+                            }
+                            result.success(rangeList);
                             break;
 
                         case "transmit":
